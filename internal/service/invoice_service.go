@@ -15,6 +15,7 @@ import (
 	"github.com/involens/invoice-ocr/internal/imageutil"
 	"github.com/involens/invoice-ocr/internal/llm"
 	"github.com/involens/invoice-ocr/internal/model"
+	"github.com/involens/invoice-ocr/internal/repository"
 	"github.com/involens/invoice-ocr/internal/retry"
 )
 
@@ -30,6 +31,8 @@ type invoiceRepo interface {
 	Create(ctx context.Context, inv *model.Invoice) (*model.Invoice, error)
 	GetByID(ctx context.Context, id bson.ObjectID) (*model.Invoice, error)
 	List(ctx context.Context, skip, limit int64) ([]*model.Invoice, error)
+	Search(ctx context.Context, params repository.SearchParams) ([]*model.Invoice, int64, error)
+	GetStats(ctx context.Context) (*repository.Stats, error)
 }
 
 // InvoiceService orchestrates invoice ingestion and retrieval.
@@ -181,6 +184,19 @@ func (s *InvoiceService) ListInvoices(ctx context.Context, skip, limit int64) ([
 		limit = 100
 	}
 	return s.repo.List(ctx, skip, limit)
+}
+
+// SearchInvoices queries invoices with filters, sorting, and pagination.
+func (s *InvoiceService) SearchInvoices(ctx context.Context, params repository.SearchParams) ([]*model.Invoice, int64, error) {
+	if params.Limit <= 0 || params.Limit > 100 {
+		params.Limit = 20
+	}
+	return s.repo.Search(ctx, params)
+}
+
+// GetStats returns aggregate statistics for the invoice collection.
+func (s *InvoiceService) GetStats(ctx context.Context) (*repository.Stats, error) {
+	return s.repo.GetStats(ctx)
 }
 
 // --- helpers ---

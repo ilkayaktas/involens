@@ -16,6 +16,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"github.com/involens/invoice-ocr/internal/model"
+	"github.com/involens/invoice-ocr/internal/repository"
 )
 
 // --- stub repository ---
@@ -41,6 +42,18 @@ func (r *stubRepo) GetByID(_ context.Context, id bson.ObjectID) (*model.Invoice,
 
 func (r *stubRepo) List(_ context.Context, _, _ int64) ([]*model.Invoice, error) {
 	return r.created, nil
+}
+
+func (r *stubRepo) Search(_ context.Context, _ repository.SearchParams) ([]*model.Invoice, int64, error) {
+	return r.created, int64(len(r.created)), nil
+}
+
+func (r *stubRepo) GetStats(_ context.Context) (*repository.Stats, error) {
+	return &repository.Stats{
+		TotalInvoices: int64(len(r.created)),
+		ByVendor:      []repository.VendorStat{},
+		ByMonth:       []repository.MonthlyStat{},
+	}, nil
 }
 
 // --- stub extractor ---
