@@ -33,6 +33,7 @@ type Vendor struct {
 // Customer holds customer (buyer) information extracted from the invoice.
 type Customer struct {
 	Name    string  `bson:"name" json:"name"`
+	TaxID   *string `bson:"tax_id,omitempty" json:"tax_id,omitempty"`
 	Address *string `bson:"address,omitempty" json:"address,omitempty"`
 	Email   *string `bson:"email,omitempty" json:"email,omitempty"`
 	Phone   *string `bson:"phone,omitempty" json:"phone,omitempty"`

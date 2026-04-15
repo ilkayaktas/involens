@@ -11,6 +11,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
+	"github.com/involens/invoice-ocr/internal/imageutil"
 	"github.com/involens/invoice-ocr/internal/llm"
 	"github.com/involens/invoice-ocr/internal/model"
 	"github.com/involens/invoice-ocr/internal/repository"
@@ -49,8 +50,14 @@ func (s *InvoiceService) ProcessInvoice(ctx context.Context, file multipart.File
 	// Determine MIME type from extension.
 	mimeType := mimeTypeFromFilename(header.Filename)
 
+	// Resize image for LLM processing (longest edge capped at 1568px).
+	resizedData, resizedMime, err := imageutil.ResizeForLLM(imageData, mimeType, imageutil.DefaultMaxPx)
+	if err != nil {
+		return nil, fmt.Errorf("service: resize image: %w", err)
+	}
+
 	// Call LLM extractor.
-	extracted, err := s.extractor.ExtractInvoice(ctx, imageData, mimeType)
+	extracted, err := s.extractor.ExtractInvoice(ctx, resizedData, resizedMime)
 	if err != nil {
 		// Persist a failed record so the operator can retry.
 		// Use a unique invoice_number to avoid duplicate-key conflicts on the unique index.
