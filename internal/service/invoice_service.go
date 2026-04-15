@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -14,18 +15,33 @@ import (
 	"github.com/involens/invoice-ocr/internal/imageutil"
 	"github.com/involens/invoice-ocr/internal/llm"
 	"github.com/involens/invoice-ocr/internal/model"
-	"github.com/involens/invoice-ocr/internal/repository"
+	"github.com/involens/invoice-ocr/internal/retry"
 )
+
+// ErrLLMExtraction is returned when the LLM extractor fails after all retries.
+type ErrLLMExtraction struct{ Cause error }
+
+func (e *ErrLLMExtraction) Error() string { return "llm extraction failed: " + e.Cause.Error() }
+func (e *ErrLLMExtraction) Unwrap() error { return e.Cause }
+
+// invoiceRepo is the minimal repository interface needed by InvoiceService.
+// The concrete *repository.InvoiceRepository satisfies this interface.
+type invoiceRepo interface {
+	Create(ctx context.Context, inv *model.Invoice) (*model.Invoice, error)
+	GetByID(ctx context.Context, id bson.ObjectID) (*model.Invoice, error)
+	List(ctx context.Context, skip, limit int64) ([]*model.Invoice, error)
+}
 
 // InvoiceService orchestrates invoice ingestion and retrieval.
 type InvoiceService struct {
-	repo        *repository.InvoiceRepository
+	repo        invoiceRepo
 	extractor   llm.InvoiceExtractor
 	storagePath string
 }
 
 // New creates a new InvoiceService.
-func New(repo *repository.InvoiceRepository, extractor llm.InvoiceExtractor, storagePath string) *InvoiceService {
+// repo must satisfy invoiceRepo (e.g. *repository.InvoiceRepository does).
+func New(repo invoiceRepo, extractor llm.InvoiceExtractor, storagePath string) *InvoiceService {
 	return &InvoiceService{
 		repo:        repo,
 		extractor:   extractor,
@@ -56,11 +72,15 @@ func (s *InvoiceService) ProcessInvoice(ctx context.Context, file multipart.File
 		return nil, fmt.Errorf("service: resize image: %w", err)
 	}
 
-	// Call LLM extractor.
-	extracted, err := s.extractor.ExtractInvoice(ctx, resizedData, resizedMime)
-	if err != nil {
+	// Call LLM extractor with retry (3 total attempts, exponential backoff + jitter).
+	var extracted *model.ExtractedInvoice
+	extractErr := retry.Do(ctx, 3, time.Second, 500*time.Millisecond, func() error {
+		var e error
+		extracted, e = s.extractor.ExtractInvoice(ctx, resizedData, resizedMime)
+		return e
+	})
+	if extractErr != nil {
 		// Persist a failed record so the operator can retry.
-		// Use a unique invoice_number to avoid duplicate-key conflicts on the unique index.
 		now := time.Now().UTC()
 		inv := &model.Invoice{
 			InvoiceNumber: fmt.Sprintf("failed-%d", now.UnixNano()),
@@ -70,14 +90,16 @@ func (s *InvoiceService) ProcessInvoice(ctx context.Context, file multipart.File
 			UpdatedAt:     now,
 		}
 		if _, saveErr := s.repo.Create(ctx, inv); saveErr != nil {
-			// Log but don't mask the original extraction error.
 			_ = saveErr
 		}
-		return nil, fmt.Errorf("service: extract invoice: %w", err)
+		return nil, &ErrLLMExtraction{Cause: extractErr}
 	}
 
 	// Map extracted data to the Invoice document.
 	inv := mapExtractedToInvoice(extracted, imagePath)
+
+	// Cross-validate totals; degrade confidence on mismatch.
+	crossValidate(inv)
 
 	created, err := s.repo.Create(ctx, inv)
 	if err != nil {
@@ -85,6 +107,63 @@ func (s *InvoiceService) ProcessInvoice(ctx context.Context, file multipart.File
 	}
 
 	return created, nil
+}
+
+// crossValidate checks line-item sums and total consistency, degrading confidence if needed.
+func crossValidate(inv *model.Invoice) {
+	const tolerance = 0.01 // 1%
+
+	var issues []string
+
+	// 1. Sum of line items vs subtotal.
+	if len(inv.LineItems) > 0 {
+		var lineSum float64
+		for _, li := range inv.LineItems {
+			lineSum += li.Amount
+		}
+		if inv.Subtotal != 0 && !withinTolerance(lineSum, inv.Subtotal, tolerance) {
+			issues = append(issues, fmt.Sprintf(
+				"line items sum (%.2f) does not match subtotal (%.2f)",
+				lineSum, inv.Subtotal,
+			))
+		}
+	}
+
+	// 2. total == subtotal + tax_amount.
+	expectedTotal := inv.Subtotal + inv.TaxAmount
+	if inv.Total != 0 && !withinTolerance(inv.Total, expectedTotal, tolerance) {
+		issues = append(issues, fmt.Sprintf(
+			"total (%.2f) does not equal subtotal + tax_amount (%.2f + %.2f = %.2f)",
+			inv.Total, inv.Subtotal, inv.TaxAmount, expectedTotal,
+		))
+	}
+
+	if len(issues) > 0 {
+		inv.Confidence = model.ConfidenceLow
+		inv.Status = model.StatusReview
+		note := "cross-validation failed: "
+		for i, iss := range issues {
+			if i > 0 {
+				note += "; "
+			}
+			note += iss
+		}
+		if inv.Notes != nil && *inv.Notes != "" {
+			combined := *inv.Notes + " | " + note
+			inv.Notes = &combined
+		} else {
+			inv.Notes = &note
+		}
+	}
+}
+
+// withinTolerance returns true when |a-b| / max(|b|, 1) <= pct.
+func withinTolerance(a, b, pct float64) bool {
+	denom := math.Abs(b)
+	if denom < 1 {
+		denom = 1
+	}
+	return math.Abs(a-b)/denom <= pct
 }
 
 // GetInvoice returns a single invoice by hex ID string.
@@ -110,7 +189,6 @@ func (s *InvoiceService) saveImage(data []byte, filename string) (string, error)
 	if err := os.MkdirAll(s.storagePath, 0o755); err != nil {
 		return "", err
 	}
-	// Prefix with timestamp to avoid collisions.
 	dest := filepath.Join(s.storagePath, fmt.Sprintf("%d_%s", time.Now().UnixNano(), filepath.Base(filename)))
 	if err := os.WriteFile(dest, data, 0o644); err != nil {
 		return "", err
