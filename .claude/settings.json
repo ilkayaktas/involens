@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep:*)",
+      "Bash(lsof:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(go:*)",
+      "Bash(gofmt:*)",
+      "Bash(git:*)",
+      "WebFetch(domain:collectapi.com)",
+      "WebFetch(domain:mgm.gov.tr)",
+      "WebFetch(domain:open-meteo.com)",
+      "WebFetch(domain:geocoding-api.open-meteo.com)",
+      "Read(/Users/ilkayaktas/.claude/plugins/**)",
+      "Read(/Users/ilkayaktas/HomeServer/webserver/**)",
+      "Bash(docker pull:*)",
+      "Bash(docker run:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker stop:*)",
+      "Read(//Users/ilkayaktas/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills/subagent-driven-development/**)",
+      "Read(//Users/**)",
+      "Bash(find /Users/ilkayaktas/Workspace/efg/fingerprint-service -name \"*.go\" -exec grep -l \"go:embed\" {} \\\\;)",
+      "Read(//SystemMetrics:/**)",
+      "Bash(kill 72330)"
+    ],
+    "additionalDirectories": [
+      "/Users/ilkayaktas/HomeServer/webserver/docs/superpowers",
+      "/tmp"
+    ]
+  }
+}

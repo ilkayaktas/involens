@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(git worktree:*)",
+      "Bash(go list:*)",
+      "Bash(GOPROXY=https://proxy.golang.org go doc github.com/anthropics/anthropic-sdk-go@v1.36.0)",
+      "Bash(curl -s \"https://proxy.golang.org/github.com/anthropics/anthropic-sdk-go/@v/v1.36.0.info\")",
+      "Bash(ls /Users/ilkayaktas/go/pkg/mod/github.com/anthropics/anthropic-sdk-go@v1.36.0/*.go)"
+    ]
+  }
+}
