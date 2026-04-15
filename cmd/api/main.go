@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -48,23 +52,47 @@ func main() {
 
 	// 5. Wire service and handler.
 	svc := service.New(repo, extractor, cfg.StoragePath)
-	h := handler.NewAPIHandler(svc)
+	h := handler.NewAPIHandler(svc, db)
 
-	// 6. Set up Gin router.
+	// 6. Set up Gin router with CORS middleware.
 	r := gin.Default()
+
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowOrigins = []string{cfg.CORSOrigin}
+	corsConfig.AllowMethods = []string{"GET", "OPTIONS"}
+	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
+	r.Use(cors.New(corsConfig))
+
 	h.RegisterRoutes(r)
 
-	// 7. Start HTTP server.
+	// 7. Start HTTP server with graceful shutdown.
 	addr := fmt.Sprintf(":%s", cfg.APIPort)
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: r,
 	}
 
-	log.Printf("api: listening on %s", addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("api: server error: %v", err)
+	go func() {
+		log.Printf("api: listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("api: server error: %v", err)
+		}
+	}()
+
+	// Wait for OS signal.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("api: shutting down...")
+
+	// Shutdown with 30s timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("api: forced shutdown: %v", err)
 	}
+
+	log.Println("api: stopped")
 }
 
 // connectMongo establishes a MongoDB connection with exponential back-off.

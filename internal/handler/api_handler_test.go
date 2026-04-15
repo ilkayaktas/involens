@@ -45,6 +45,10 @@ func (r *handlerStubRepo) Search(_ context.Context, _ repository.SearchParams) (
 	return r.invoices, int64(len(r.invoices)), nil
 }
 
+func (r *handlerStubRepo) GetByImageHash(_ context.Context, _ string) (*model.Invoice, error) {
+	return nil, repository.ErrNotFound
+}
+
 func (r *handlerStubRepo) GetStats(_ context.Context) (*repository.Stats, error) {
 	return &repository.Stats{
 		TotalInvoices: int64(len(r.invoices)),
@@ -61,7 +65,7 @@ func newTestRouter(t *testing.T, repo *handlerStubRepo) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	svc := service.New(repo, nil, t.TempDir())
-	h := NewAPIHandler(svc)
+	h := NewAPIHandler(svc, nil)
 	h.RegisterRoutes(r)
 	return r
 }

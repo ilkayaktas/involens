@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -30,6 +32,7 @@ func (e *ErrLLMExtraction) Unwrap() error { return e.Cause }
 type invoiceRepo interface {
 	Create(ctx context.Context, inv *model.Invoice) (*model.Invoice, error)
 	GetByID(ctx context.Context, id bson.ObjectID) (*model.Invoice, error)
+	GetByImageHash(ctx context.Context, hash string) (*model.Invoice, error)
 	List(ctx context.Context, skip, limit int64) ([]*model.Invoice, error)
 	Search(ctx context.Context, params repository.SearchParams) ([]*model.Invoice, int64, error)
 	GetStats(ctx context.Context) (*repository.Stats, error)
@@ -66,7 +69,19 @@ func (s *InvoiceService) ProcessInvoice(ctx context.Context, file multipart.File
 
 // ProcessInvoiceData saves the provided image bytes, calls the LLM extractor, and persists the result.
 // It accepts raw bytes directly, making it suitable for async processing pipelines.
+// Idempotency: if an invoice with the same SHA-256 image hash already exists, it is returned immediately.
 func (s *InvoiceService) ProcessInvoiceData(ctx context.Context, imageData []byte, mimeType string, filename string) (*model.Invoice, error) {
+	// Compute SHA-256 hash for idempotency check.
+	hashBytes := sha256.Sum256(imageData)
+	imageHash := fmt.Sprintf("%x", hashBytes)
+
+	// Check if we have already processed this exact image.
+	if existing, err := s.repo.GetByImageHash(ctx, imageHash); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, repository.ErrNotFound) {
+		return nil, fmt.Errorf("service: idempotency check: %w", err)
+	}
+
 	// Persist image to storage.
 	imagePath, err := s.saveImage(imageData, filename)
 	if err != nil {
@@ -92,6 +107,7 @@ func (s *InvoiceService) ProcessInvoiceData(ctx context.Context, imageData []byt
 		inv := &model.Invoice{
 			InvoiceNumber: fmt.Sprintf("failed-%d", now.UnixNano()),
 			ImagePath:     imagePath,
+			ImageHash:     imageHash,
 			Status:        model.StatusFailed,
 			CreatedAt:     now,
 			UpdatedAt:     now,
@@ -103,7 +119,7 @@ func (s *InvoiceService) ProcessInvoiceData(ctx context.Context, imageData []byt
 	}
 
 	// Map extracted data to the Invoice document.
-	inv := mapExtractedToInvoice(extracted, imagePath)
+	inv := mapExtractedToInvoice(extracted, imagePath, imageHash)
 
 	// Cross-validate totals; degrade confidence on mismatch.
 	crossValidate(inv)
@@ -216,7 +232,7 @@ func (s *InvoiceService) saveImage(data []byte, filename string) (string, error)
 	return dest, nil
 }
 
-func mapExtractedToInvoice(e *model.ExtractedInvoice, imagePath string) *model.Invoice {
+func mapExtractedToInvoice(e *model.ExtractedInvoice, imagePath, imageHash string) *model.Invoice {
 	return &model.Invoice{
 		InvoiceNumber: e.InvoiceNumber,
 		Vendor:        e.Vendor,
@@ -232,6 +248,7 @@ func mapExtractedToInvoice(e *model.ExtractedInvoice, imagePath string) *model.I
 		Notes:         e.Notes,
 		RawResponse:   e.RawResponse,
 		ImagePath:     imagePath,
+		ImageHash:     imageHash,
 		Confidence:    e.Confidence,
 		Status:        model.StatusProcessed,
 	}

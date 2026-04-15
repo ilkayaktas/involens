@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -13,6 +14,8 @@ import (
 	"github.com/involens/invoice-ocr/internal/repository"
 	"github.com/involens/invoice-ocr/internal/service"
 	"github.com/involens/invoice-ocr/internal/worker"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"golang.org/x/time/rate"
 )
 
 const maxUploadBytes = 10 << 20 // 10 MB
@@ -53,31 +56,42 @@ type asyncResponse struct {
 
 // IngestionHandler handles HTTP requests for invoice ingestion.
 type IngestionHandler struct {
-	svc     InvoiceProcessor
+	svc      InvoiceProcessor
 	asyncSvc worker.ProcessorService
-	jobRepo *repository.JobRepository
-	pool    *worker.Pool
+	jobRepo  *repository.JobRepository
+	pool     *worker.Pool
+	limiter  *rate.Limiter
+	db       *mongo.Database
 }
 
 // NewIngestionHandler creates an IngestionHandler for synchronous processing only.
-func NewIngestionHandler(svc *service.InvoiceService) *IngestionHandler {
-	return &IngestionHandler{svc: svc}
+func NewIngestionHandler(svc *service.InvoiceService, db *mongo.Database, rps, burst int) *IngestionHandler {
+	return &IngestionHandler{
+		svc:     svc,
+		db:      db,
+		limiter: rate.NewLimiter(rate.Limit(rps), burst),
+	}
 }
 
 // NewIngestionHandlerWithAsync creates an IngestionHandler that supports both sync and async processing.
-func NewIngestionHandlerWithAsync(svc *service.InvoiceService, jobRepo *repository.JobRepository, pool *worker.Pool) *IngestionHandler {
+func NewIngestionHandlerWithAsync(svc *service.InvoiceService, jobRepo *repository.JobRepository, pool *worker.Pool, db *mongo.Database, rps, burst int) *IngestionHandler {
 	return &IngestionHandler{
 		svc:      svc,
 		asyncSvc: svc,
 		jobRepo:  jobRepo,
 		pool:     pool,
+		db:       db,
+		limiter:  rate.NewLimiter(rate.Limit(rps), burst),
 	}
 }
 
 // newIngestionHandlerWithProcessor creates an IngestionHandler from any InvoiceProcessor.
 // Used in tests.
 func newIngestionHandlerWithProcessor(svc InvoiceProcessor) *IngestionHandler {
-	return &IngestionHandler{svc: svc}
+	return &IngestionHandler{
+		svc:     svc,
+		limiter: rate.NewLimiter(rate.Limit(10), 20),
+	}
 }
 
 // RegisterRoutes attaches routes to the provided gin Engine.
@@ -90,11 +104,26 @@ func (h *IngestionHandler) RegisterRoutes(r *gin.Engine) {
 	}
 }
 
-// Health returns a simple liveness response.
+// Health returns a liveness response that includes MongoDB connectivity.
 func (h *IngestionHandler) Health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "ok",
+	mongoStatus := "connected"
+	httpStatus := http.StatusOK
+	serviceStatus := "ok"
+
+	if h.db != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if err := h.db.Client().Ping(ctx, nil); err != nil {
+			mongoStatus = "disconnected"
+			serviceStatus = "degraded"
+			httpStatus = http.StatusServiceUnavailable
+		}
+	}
+
+	c.JSON(httpStatus, gin.H{
+		"status":  serviceStatus,
 		"service": "ingestion",
+		"mongo":   mongoStatus,
 	})
 }
 
@@ -104,6 +133,12 @@ func (h *IngestionHandler) Health(c *gin.Context) {
 // Content-Type: multipart/form-data
 // Field: "invoice" — the image file
 func (h *IngestionHandler) Upload(c *gin.Context) {
+	// Rate limiting check.
+	if h.limiter != nil && !h.limiter.Allow() {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded, please slow down"})
+		return
+	}
+
 	// Enforce overall request body size before parsing the multipart form.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes)
 
@@ -161,6 +196,11 @@ func (h *IngestionHandler) Upload(c *gin.Context) {
 // Content-Type: multipart/form-data
 // Field: "invoice" — the image file
 func (h *IngestionHandler) UploadAsync(c *gin.Context) {
+	if !h.limiter.Allow() {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
+		return
+	}
+
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes)
 
 	file, header, err := c.Request.FormFile("invoice")

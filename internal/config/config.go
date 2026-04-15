@@ -29,6 +29,13 @@ type Config struct {
 
 	// Async worker pool
 	WorkerCount int // WORKER_COUNT, default 4
+
+	// Rate limiting (ingestion service)
+	RateLimitRPS   int // RATE_LIMIT_RPS, default 10
+	RateLimitBurst int // RATE_LIMIT_BURST, default 20
+
+	// CORS (API service)
+	CORSOrigin string // CORS_ORIGIN, default "*"
 }
 
 // Load reads the .env file (if present) and then reads environment variables into a Config.
@@ -46,6 +53,9 @@ func Load() (*Config, error) {
 		ClaudeModel:     getEnv("CLAUDE_MODEL", "claude-sonnet-4-6"),
 		StoragePath:     getEnv("STORAGE_PATH", "./storage"),
 		WorkerCount:     getEnvInt("WORKER_COUNT", 4),
+		RateLimitRPS:    getEnvInt("RATE_LIMIT_RPS", 10),
+		RateLimitBurst:  getEnvInt("RATE_LIMIT_BURST", 20),
+		CORSOrigin:      getEnv("CORS_ORIGIN", "*"),
 	}
 
 	return cfg, nil

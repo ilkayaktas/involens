@@ -40,6 +40,15 @@ func (r *stubRepo) GetByID(_ context.Context, id bson.ObjectID) (*model.Invoice,
 	return nil, fmt.Errorf("not found: %s", id.Hex())
 }
 
+func (r *stubRepo) GetByImageHash(_ context.Context, hash string) (*model.Invoice, error) {
+	for _, inv := range r.created {
+		if inv.ImageHash == hash {
+			return inv, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
 func (r *stubRepo) List(_ context.Context, _, _ int64) ([]*model.Invoice, error) {
 	return r.created, nil
 }

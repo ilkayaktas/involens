@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -62,24 +65,44 @@ func main() {
 	ctx := context.Background()
 	pool.Start(ctx)
 
-	// 7. Wire handler with async support.
-	h := handler.NewIngestionHandlerWithAsync(svc, jobRepo, pool)
+	// 7. Wire handler with async support and rate limiting.
+	h := handler.NewIngestionHandlerWithAsync(svc, jobRepo, pool, db, cfg.RateLimitRPS, cfg.RateLimitBurst)
 
 	// 8. Set up Gin router.
 	r := gin.Default()
 	h.RegisterRoutes(r)
 
-	// 9. Start HTTP server.
+	// 9. Start HTTP server with graceful shutdown.
 	addr := fmt.Sprintf(":%s", cfg.IngestionPort)
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: r,
 	}
 
-	log.Printf("ingestion: listening on %s", addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("ingestion: server error: %v", err)
+	go func() {
+		log.Printf("ingestion: listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("ingestion: server error: %v", err)
+		}
+	}()
+
+	// Wait for OS signal.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("ingestion: shutting down...")
+
+	// Shutdown HTTP server with 30s timeout.
+	shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutCtx); err != nil {
+		log.Fatalf("ingestion: forced shutdown: %v", err)
 	}
+
+	// Stop the worker pool.
+	pool.Stop()
+
+	log.Println("ingestion: stopped")
 }
 
 // connectMongo establishes a MongoDB connection with exponential back-off.

@@ -1,23 +1,27 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/involens/invoice-ocr/internal/repository"
 	"github.com/involens/invoice-ocr/internal/service"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 // APIHandler handles HTTP requests for the read-only API service.
 type APIHandler struct {
 	svc *service.InvoiceService
+	db  *mongo.Database
 }
 
 // NewAPIHandler creates an APIHandler.
-func NewAPIHandler(svc *service.InvoiceService) *APIHandler {
-	return &APIHandler{svc: svc}
+func NewAPIHandler(svc *service.InvoiceService, db *mongo.Database) *APIHandler {
+	return &APIHandler{svc: svc, db: db}
 }
 
 // RegisterRoutes attaches routes to the provided gin Engine.
@@ -35,11 +39,26 @@ func (h *APIHandler) RegisterRoutes(r *gin.Engine) {
 	}
 }
 
-// Health returns a simple liveness response.
+// Health returns a liveness response that includes MongoDB connectivity.
 func (h *APIHandler) Health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "ok",
+	mongoStatus := "connected"
+	httpStatus := http.StatusOK
+	serviceStatus := "ok"
+
+	if h.db != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if err := h.db.Client().Ping(ctx, nil); err != nil {
+			mongoStatus = "disconnected"
+			serviceStatus = "degraded"
+			httpStatus = http.StatusServiceUnavailable
+		}
+	}
+
+	c.JSON(httpStatus, gin.H{
+		"status":  serviceStatus,
 		"service": "api",
+		"mongo":   mongoStatus,
 	})
 }
 

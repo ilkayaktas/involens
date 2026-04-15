@@ -93,6 +93,10 @@ func (r *InvoiceRepository) ensureIndexes(ctx context.Context) error {
 		{
 			Keys: bson.D{{Key: "created_at", Value: -1}},
 		},
+		{
+			Keys:    bson.D{{Key: "image_hash", Value: 1}},
+			Options: options.Index().SetUnique(true).SetSparse(true),
+		},
 	}
 
 	_, err := r.collection.Indexes().CreateMany(ctx, indexes)
@@ -123,6 +127,20 @@ func (r *InvoiceRepository) GetByID(ctx context.Context, id bson.ObjectID) (*mod
 			return nil, fmt.Errorf("invoice_repo: get_by_id %s: %w", id.Hex(), ErrNotFound)
 		}
 		return nil, fmt.Errorf("invoice_repo: get_by_id: %w", err)
+	}
+	return &inv, nil
+}
+
+// GetByImageHash retrieves a single invoice by its SHA-256 image hash.
+// Returns ErrNotFound if no invoice with the given hash exists.
+func (r *InvoiceRepository) GetByImageHash(ctx context.Context, hash string) (*model.Invoice, error) {
+	var inv model.Invoice
+	err := r.collection.FindOne(ctx, bson.M{"image_hash": hash}).Decode(&inv)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("invoice_repo: get_by_image_hash: %w", err)
 	}
 	return &inv, nil
 }
