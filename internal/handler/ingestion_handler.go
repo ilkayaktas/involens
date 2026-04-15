@@ -8,8 +8,11 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/involens/invoice-ocr/internal/model"
+	"github.com/involens/invoice-ocr/internal/repository"
 	"github.com/involens/invoice-ocr/internal/service"
+	"github.com/involens/invoice-ocr/internal/worker"
 )
 
 const maxUploadBytes = 10 << 20 // 10 MB
@@ -42,14 +45,33 @@ type vendorBrief struct {
 	Name string `json:"name"`
 }
 
-// IngestionHandler handles HTTP requests for invoice ingestion.
-type IngestionHandler struct {
-	svc InvoiceProcessor
+// asyncResponse is the shape returned on a successful 202 Accepted.
+type asyncResponse struct {
+	JobID  string `json:"job_id"`
+	Status string `json:"status"`
 }
 
-// NewIngestionHandler creates an IngestionHandler.
+// IngestionHandler handles HTTP requests for invoice ingestion.
+type IngestionHandler struct {
+	svc     InvoiceProcessor
+	asyncSvc worker.ProcessorService
+	jobRepo *repository.JobRepository
+	pool    *worker.Pool
+}
+
+// NewIngestionHandler creates an IngestionHandler for synchronous processing only.
 func NewIngestionHandler(svc *service.InvoiceService) *IngestionHandler {
 	return &IngestionHandler{svc: svc}
+}
+
+// NewIngestionHandlerWithAsync creates an IngestionHandler that supports both sync and async processing.
+func NewIngestionHandlerWithAsync(svc *service.InvoiceService, jobRepo *repository.JobRepository, pool *worker.Pool) *IngestionHandler {
+	return &IngestionHandler{
+		svc:      svc,
+		asyncSvc: svc,
+		jobRepo:  jobRepo,
+		pool:     pool,
+	}
 }
 
 // newIngestionHandlerWithProcessor creates an IngestionHandler from any InvoiceProcessor.
@@ -62,6 +84,10 @@ func newIngestionHandlerWithProcessor(svc InvoiceProcessor) *IngestionHandler {
 func (h *IngestionHandler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/health", h.Health)
 	r.POST("/invoices", h.Upload)
+	if h.pool != nil {
+		r.POST("/invoices/async", h.UploadAsync)
+		r.GET("/invoices/jobs/:id", h.GetJob)
+	}
 }
 
 // Health returns a simple liveness response.
@@ -127,6 +153,108 @@ func (h *IngestionHandler) Upload(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, toInvoiceResponse(inv))
+}
+
+// UploadAsync accepts a multipart image upload and enqueues it for background OCR processing.
+//
+// POST /invoices/async
+// Content-Type: multipart/form-data
+// Field: "invoice" — the image file
+func (h *IngestionHandler) UploadAsync(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes)
+
+	file, header, err := c.Request.FormFile("invoice")
+	if err != nil {
+		if isMaxBytesError(err) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "image exceeds 10 MB size limit"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing 'invoice' file field: " + err.Error()})
+		return
+	}
+	defer file.Close()
+
+	if header.Size > maxUploadBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "image exceeds 10 MB size limit"})
+		return
+	}
+
+	// Detect MIME type from the first 512 bytes.
+	sniff := make([]byte, 512)
+	n, readErr := file.Read(sniff)
+	if readErr != nil && readErr != io.EOF {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read file: " + readErr.Error()})
+		return
+	}
+	detected := http.DetectContentType(sniff[:n])
+	if !allowedMIMETypes[detected] {
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{
+			"error": "unsupported image format: " + detected + "; accepted formats are JPEG, PNG, WebP, GIF",
+		})
+		return
+	}
+
+	// Seek back to start and read all bytes (the pool owns the data after this handler returns).
+	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reset file reader: " + seekErr.Error()})
+		return
+	}
+	imageData, readAllErr := io.ReadAll(file)
+	if readAllErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read file: " + readAllErr.Error()})
+		return
+	}
+
+	// Create job record.
+	jobID := uuid.New().String()
+	job := &model.Job{
+		ID:     jobID,
+		Status: model.JobStatusPending,
+	}
+	if createErr := h.jobRepo.Create(c.Request.Context(), job); createErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create job: " + createErr.Error()})
+		return
+	}
+
+	// Enqueue to worker pool.
+	task := worker.Task{
+		JobID:     jobID,
+		ImageData: imageData,
+		MimeType:  detected,
+		Filename:  header.Filename,
+	}
+	if submitErr := h.pool.Submit(task); submitErr != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "worker pool is full, try again later"})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, asyncResponse{
+		JobID:  jobID,
+		Status: model.JobStatusPending,
+	})
+}
+
+// GetJob returns the current status of an async job.
+//
+// GET /invoices/jobs/:id
+func (h *IngestionHandler) GetJob(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing job id"})
+		return
+	}
+
+	job, err := h.jobRepo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrJobNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, job)
 }
 
 // handleServiceError maps known service errors to appropriate HTTP status codes.

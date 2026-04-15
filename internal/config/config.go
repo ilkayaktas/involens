@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -25,6 +26,9 @@ type Config struct {
 
 	// Image Storage
 	StoragePath string // STORAGE_PATH, default "./storage"
+
+	// Async worker pool
+	WorkerCount int // WORKER_COUNT, default 4
 }
 
 // Load reads the .env file (if present) and then reads environment variables into a Config.
@@ -41,6 +45,7 @@ func Load() (*Config, error) {
 		AnthropicAPIKey: getEnv("ANTHROPIC_API_KEY", ""),
 		ClaudeModel:     getEnv("CLAUDE_MODEL", "claude-sonnet-4-6"),
 		StoragePath:     getEnv("STORAGE_PATH", "./storage"),
+		WorkerCount:     getEnvInt("WORKER_COUNT", 4),
 	}
 
 	return cfg, nil
@@ -49,6 +54,15 @@ func Load() (*Config, error) {
 func getEnv(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return defaultVal
+}
+
+func getEnvInt(key string, defaultVal int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
 	}
 	return defaultVal
 }

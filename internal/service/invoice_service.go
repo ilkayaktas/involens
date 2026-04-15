@@ -60,14 +60,18 @@ func (s *InvoiceService) ProcessInvoice(ctx context.Context, file multipart.File
 		return nil, fmt.Errorf("service: read image: %w", err)
 	}
 
+	mimeType := mimeTypeFromFilename(header.Filename)
+	return s.ProcessInvoiceData(ctx, imageData, mimeType, header.Filename)
+}
+
+// ProcessInvoiceData saves the provided image bytes, calls the LLM extractor, and persists the result.
+// It accepts raw bytes directly, making it suitable for async processing pipelines.
+func (s *InvoiceService) ProcessInvoiceData(ctx context.Context, imageData []byte, mimeType string, filename string) (*model.Invoice, error) {
 	// Persist image to storage.
-	imagePath, err := s.saveImage(imageData, header.Filename)
+	imagePath, err := s.saveImage(imageData, filename)
 	if err != nil {
 		return nil, fmt.Errorf("service: save image: %w", err)
 	}
-
-	// Determine MIME type from extension.
-	mimeType := mimeTypeFromFilename(header.Filename)
 
 	// Resize image for LLM processing (longest edge capped at 1568px).
 	resizedData, resizedMime, err := imageutil.ResizeForLLM(imageData, mimeType, imageutil.DefaultMaxPx)

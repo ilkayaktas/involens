@@ -18,6 +18,7 @@ import (
 	"github.com/involens/invoice-ocr/internal/llm/mock"
 	"github.com/involens/invoice-ocr/internal/repository"
 	"github.com/involens/invoice-ocr/internal/service"
+	"github.com/involens/invoice-ocr/internal/worker"
 )
 
 func main() {
@@ -33,10 +34,15 @@ func main() {
 		log.Fatalf("ingestion: connect mongo: %v", err)
 	}
 
-	// 3. Initialize repository.
+	// 3. Initialize repositories.
 	repo, err := repository.New(db)
 	if err != nil {
 		log.Fatalf("ingestion: init repository: %v", err)
+	}
+
+	jobRepo, err := repository.NewJobRepository(db)
+	if err != nil {
+		log.Fatalf("ingestion: init job repository: %v", err)
 	}
 
 	// 4. Initialize LLM extractor via factory pattern.
@@ -46,15 +52,24 @@ func main() {
 	}
 	log.Printf("ingestion: using LLM provider %q", extractor.Name())
 
-	// 5. Wire service and handler.
+	// 5. Wire service.
 	svc := service.New(repo, extractor, cfg.StoragePath)
-	h := handler.NewIngestionHandler(svc)
 
-	// 6. Set up Gin router.
+	// 6. Create and start worker pool.
+	workerCount := cfg.WorkerCount
+	log.Printf("ingestion: starting worker pool with %d workers", workerCount)
+	pool := worker.NewPool(workerCount, svc, jobRepo)
+	ctx := context.Background()
+	pool.Start(ctx)
+
+	// 7. Wire handler with async support.
+	h := handler.NewIngestionHandlerWithAsync(svc, jobRepo, pool)
+
+	// 8. Set up Gin router.
 	r := gin.Default()
 	h.RegisterRoutes(r)
 
-	// 7. Start HTTP server.
+	// 9. Start HTTP server.
 	addr := fmt.Sprintf(":%s", cfg.IngestionPort)
 	srv := &http.Server{
 		Addr:    addr,
