@@ -1,0 +1,39 @@
+version: "3.9"
+services:
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: invoices
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingestion
+    ports:
+      - "8080:8080"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DB=invoices
+      - LLM_PROVIDER=claude
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    depends_on:
+      - mongodb
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8081:8081"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DB=invoices
+    depends_on:
+      - mongodb
+
+volumes:
+  mongo_data:
