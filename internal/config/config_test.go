@@ -63,3 +63,35 @@ func TestLoad_EnvOverride(t *testing.T) {
 		t.Errorf("IngestionPort = %q, want %q", cfg.IngestionPort, "9090")
 	}
 }
+
+func TestConfig_GeminiDefaults(t *testing.T) {
+	os.Unsetenv("GEMINI_API_KEY")
+	os.Unsetenv("GEMINI_MODEL")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.GeminiAPIKey != "" {
+		t.Errorf("GeminiAPIKey = %q, want empty string", cfg.GeminiAPIKey)
+	}
+	if cfg.GeminiModel != "gemini-2.0-flash" {
+		t.Errorf("GeminiModel = %q, want %q", cfg.GeminiModel, "gemini-2.0-flash")
+	}
+}
+
+func TestConfig_GeminiEnvOverride(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-key-123")
+	t.Setenv("GEMINI_MODEL", "gemini-2.5-pro")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.GeminiAPIKey != "test-key-123" {
+		t.Errorf("GeminiAPIKey = %q, want %q", cfg.GeminiAPIKey, "test-key-123")
+	}
+	if cfg.GeminiModel != "gemini-2.5-pro" {
+		t.Errorf("GeminiModel = %q, want %q", cfg.GeminiModel, "gemini-2.5-pro")
+	}
+}
