@@ -18,9 +18,9 @@ var ErrNotFound = errors.New("invoice not found")
 
 // SearchParams defines the filter/sort/pagination options for Search.
 type SearchParams struct {
-	Vendor    string  // substring match on vendor.name
-	From      string  // YYYY-MM-DD date range start (inclusive)
-	To        string  // YYYY-MM-DD date range end (inclusive)
+	Vendor    string // substring match on vendor.name
+	From      string // YYYY-MM-DD date range start (inclusive)
+	To        string // YYYY-MM-DD date range end (inclusive)
 	MinAmount float64
 	MaxAmount float64
 	Status    string
@@ -278,7 +278,7 @@ func (r *InvoiceRepository) GetStats(ctx context.Context) (*Stats, error) {
 	// --- total invoices + total amount ---
 	totalPipeline := mongo.Pipeline{
 		{{Key: "$group", Value: bson.M{
-			"_id":          nil,
+			"_id":           nil,
 			"totalInvoices": bson.M{"$sum": 1},
 			"totalAmount":   bson.M{"$sum": "$total"},
 		}}},

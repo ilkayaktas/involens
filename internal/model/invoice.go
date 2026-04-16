@@ -68,7 +68,7 @@ type Invoice struct {
 	ImagePath     string        `bson:"image_path" json:"image_path"`
 	ImageHash     string        `bson:"image_hash,omitempty" json:"image_hash,omitempty"`
 	Confidence    string        `bson:"confidence" json:"confidence"` // "high" | "medium" | "low"
-	Status        string        `bson:"status" json:"status"`          // "processed" | "failed" | "pending" | "review"
+	Status        string        `bson:"status" json:"status"`         // "processed" | "failed" | "pending" | "review"
 	CreatedAt     time.Time     `bson:"created_at" json:"created_at"`
 	UpdatedAt     time.Time     `bson:"updated_at" json:"updated_at"`
 }
