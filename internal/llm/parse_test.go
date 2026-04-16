@@ -1,10 +1,9 @@
-package claude
+package llm
 
 import (
 	"testing"
 )
 
-// sampleInvoiceJSON is a representative JSON response from the Claude API.
 const sampleInvoiceJSON = `{
   "invoice_number": "INV-2024-001",
   "date": "2024-01-15",
@@ -43,11 +42,10 @@ const sampleInvoiceJSON = `{
 }`
 
 func TestParseInvoiceJSON(t *testing.T) {
-	inv, err := parseInvoiceJSON(sampleInvoiceJSON)
+	inv, err := ParseInvoiceJSON(sampleInvoiceJSON)
 	if err != nil {
-		t.Fatalf("parseInvoiceJSON returned error: %v", err)
+		t.Fatalf("ParseInvoiceJSON returned error: %v", err)
 	}
-
 	if inv.InvoiceNumber != "INV-2024-001" {
 		t.Errorf("invoice_number = %q, want %q", inv.InvoiceNumber, "INV-2024-001")
 	}
@@ -108,33 +106,12 @@ func TestStripCodeFences(t *testing.T) {
 		input string
 		want  string
 	}{
-		{
-			name:  "no fences",
-			input: `{"key": "value"}`,
-			want:  `{"key": "value"}`,
-		},
-		{
-			name:  "json fence",
-			input: "```json\n{\"key\": \"value\"}\n```",
-			want:  `{"key": "value"}`,
-		},
-		{
-			name:  "plain fence",
-			input: "```\n{\"key\": \"value\"}\n```",
-			want:  `{"key": "value"}`,
-		},
-		{
-			name:  "extra whitespace",
-			input: "  ```json\n{\"key\": \"value\"}\n```  ",
-			want:  `{"key": "value"}`,
-		},
-		{
-			name:  "no trailing fence",
-			input: "```json\n{\"key\": \"value\"}",
-			want:  `{"key": "value"}`,
-		},
+		{name: "no fences", input: `{"key": "value"}`, want: `{"key": "value"}`},
+		{name: "json fence", input: "```json\n{\"key\": \"value\"}\n```", want: `{"key": "value"}`},
+		{name: "plain fence", input: "```\n{\"key\": \"value\"}\n```", want: `{"key": "value"}`},
+		{name: "extra whitespace", input: "  ```json\n{\"key\": \"value\"}\n```  ", want: `{"key": "value"}`},
+		{name: "no trailing fence", input: "```json\n{\"key\": \"value\"}", want: `{"key": "value"}`},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := stripCodeFences(tc.input)
@@ -147,9 +124,9 @@ func TestStripCodeFences(t *testing.T) {
 
 func TestParseInvoiceJSONWithCodeFence(t *testing.T) {
 	fenced := "```json\n" + sampleInvoiceJSON + "\n```"
-	inv, err := parseInvoiceJSON(fenced)
+	inv, err := ParseInvoiceJSON(fenced)
 	if err != nil {
-		t.Fatalf("parseInvoiceJSON with code fence returned error: %v", err)
+		t.Fatalf("ParseInvoiceJSON with code fence returned error: %v", err)
 	}
 	if inv.InvoiceNumber != "INV-2024-001" {
 		t.Errorf("invoice_number = %q, want %q", inv.InvoiceNumber, "INV-2024-001")
@@ -172,15 +149,21 @@ func TestParseInvoiceJSON_NullCustomerName(t *testing.T) {
 		"notes": null,
 		"confidence": "low"
 	}`
-
-	inv, err := parseInvoiceJSON(jsonWithNullCustomer)
+	inv, err := ParseInvoiceJSON(jsonWithNullCustomer)
 	if err != nil {
-		t.Fatalf("parseInvoiceJSON returned error: %v", err)
+		t.Fatalf("ParseInvoiceJSON returned error: %v", err)
 	}
 	if inv.Customer.Name != "" {
 		t.Errorf("customer.name = %q, want empty string for null", inv.Customer.Name)
 	}
 	if inv.DueDate != nil {
 		t.Errorf("due_date = %v, want nil", inv.DueDate)
+	}
+}
+
+func TestParseInvoiceJSON_InvalidJSON(t *testing.T) {
+	_, err := ParseInvoiceJSON("not valid json")
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
 	}
 }
