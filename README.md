@@ -45,6 +45,7 @@ The LLM provider is fully configurable via the `LLM_PROVIDER` environment variab
 | Value | Provider | Notes |
 |---|---|---|
 | `claude` (default) | Anthropic Claude | Requires `ANTHROPIC_API_KEY` |
+| `gemini` | Google Gemini | Requires `GEMINI_API_KEY`; model via `GEMINI_MODEL` (default: `gemini-2.0-flash`) |
 | `mock` | In-memory mock | For local development and testing |
 
 To add a new provider (OpenAI, Gemini, etc.) implement the `InvoiceExtractor` interface in `internal/llm/` and register it in the factory in `cmd/ingestion/main.go`.

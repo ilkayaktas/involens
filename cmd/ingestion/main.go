@@ -18,6 +18,7 @@ import (
 	"github.com/involens/invoice-ocr/internal/handler"
 	"github.com/involens/invoice-ocr/internal/llm"
 	"github.com/involens/invoice-ocr/internal/llm/claude"
+	"github.com/involens/invoice-ocr/internal/llm/gemini"
 	"github.com/involens/invoice-ocr/internal/llm/mock"
 	"github.com/involens/invoice-ocr/internal/repository"
 	"github.com/involens/invoice-ocr/internal/service"
@@ -141,12 +142,13 @@ func connectMongo(cfg *config.Config) (*mongo.Database, error) {
 func newExtractor(cfg *config.Config) (llm.InvoiceExtractor, error) {
 	factories := map[string]llm.ExtractorFactory{
 		"claude": func(c *config.Config) (llm.InvoiceExtractor, error) { return claude.New(c) },
+		"gemini": func(c *config.Config) (llm.InvoiceExtractor, error) { return gemini.New(c) },
 		"mock":   func(c *config.Config) (llm.InvoiceExtractor, error) { return mock.New(c) },
 	}
 
 	factory, ok := factories[cfg.LLMProvider]
 	if !ok {
-		return nil, fmt.Errorf("unknown LLM provider %q — supported: claude, mock", cfg.LLMProvider)
+		return nil, fmt.Errorf("unknown LLM provider %q — supported: claude, gemini, mock", cfg.LLMProvider)
 	}
 
 	return factory(cfg)
