@@ -24,6 +24,10 @@ type Config struct {
 	AnthropicAPIKey string // ANTHROPIC_API_KEY
 	ClaudeModel     string // CLAUDE_MODEL, default "claude-sonnet-4-6"
 
+	// Gemini
+	GeminiAPIKey string // GEMINI_API_KEY
+	GeminiModel  string // GEMINI_MODEL, default "gemini-2.0-flash"
+
 	// Image Storage
 	StoragePath string // STORAGE_PATH, default "./storage"
 
@@ -51,6 +55,8 @@ func Load() (*Config, error) {
 		LLMProvider:     getEnv("LLM_PROVIDER", "claude"),
 		AnthropicAPIKey: getEnv("ANTHROPIC_API_KEY", ""),
 		ClaudeModel:     getEnv("CLAUDE_MODEL", "claude-sonnet-4-6"),
+		GeminiAPIKey:    getEnv("GEMINI_API_KEY", ""),
+		GeminiModel:     getEnv("GEMINI_MODEL", "gemini-2.0-flash"),
 		StoragePath:     getEnv("STORAGE_PATH", "./storage"),
 		WorkerCount:     getEnvInt("WORKER_COUNT", 4),
 		RateLimitRPS:    getEnvInt("RATE_LIMIT_RPS", 10),
